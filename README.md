@@ -281,6 +281,8 @@ geral), e ela recusa tag em quem é da Equipe. A regra vive em
 | `/api/clients/demo` | ADMIN geral | Cria um Time DEMO completo |
 | `/api/clients/demo/:id/dados` | ADMIN geral | Refaz os dados gerados de um Time DEMO |
 | `/api/clients/demo/:id/acesso` | ADMIN geral | Liga e desliga o acesso de um Time DEMO |
+| `/api/clients/demo/:id/mapa` | ADMIN geral | Completa as moradias do mapa de um Time DEMO, um pedaço por chamada |
+| `/api/clients/demo/catalogo` | ADMIN geral | De onde vêm as escolas do Time DEMO (TSE ou catálogo) e quantas há |
 | `/api/clients/[id]/duplicar` | ADMIN geral | Duplica um time (administradores, Líderes, formulários e configurações) |
 | `/api/configuracoes/chaves/[id]` | ADMIN geral | Revoga uma chave da API |
 | `/api/configuracoes/chaves/[id]/atividade` | ADMIN geral | Ações registradas de uma chave |
@@ -581,13 +583,37 @@ as **pessoas** dele são geradas no servidor a partir de listas fictícias
 demonstração com DDD 82. Nunca há CPF, título de eleitor, e-mail ou telefone
 de pessoa real.
 
-Os **lugares não são fictícios**. Escola, rua, bairro, município, UF, zona e
-seção saem de `src/lib/domain/demo-catalog.ts`, que só tem local de votação
-**real de Alagoas**, divulgado pela Justiça Eleitoral, com a fonte anotada
-linha a linha: 33 locais em 17 municípios — Maceió, Arapiraca, Palmeira dos
-Índios, Girau do Ponciano, Ouro Branco, Rio Largo, Santana do Ipanema, Pão de
-Açúcar, Coruripe, Marechal Deodoro, Porto Calvo, Maragogi, Lagoa da Canoa,
-Limoeiro de Anadia, Junqueiro, Pariconha e Paulo Jacinto.
+Os **lugares não são fictícios**. As escolas saem da **tabela oficial do TSE**
+(`cmd_polling_places`, migration 042) — a mesma que põe a escola de um
+integrante real no mapa —, com nome, endereço, zona, seções e a coordenada
+oficial de cada local. Com a tabela de Alagoas carregada, um Time DEMO sorteia
+entre **centenas de escolas em dezenas de municípios** (`src/lib/domain/demo-tse.ts`):
+
+- **municípios**: Maceió e Arapiraca entram sempre; os demais são sorteados com
+  peso pelo eleitorado (soma das seções), então o sertão e o litoral também
+  aparecem. Doze escolas cobrem 8 municípios; sessenta, 17; trezentas, 38;
+- **escolas por município**: em proporção ao eleitorado, amaciada, para a
+  capital não engolir o mapa; toda cidade escolhida tem ao menos uma escola;
+- **quais escolas**: sorteadas com peso pelo número de seções, e o colégio
+  grande recebe mais gente do que a escola rural de duas seções;
+- **cada pessoa** recebe a zona e uma seção **que existem** na escola dela —
+  zona + seção acham a escola pelo mesmo caminho do cadastro real, e é por
+  isso que o mapa por seção, a Sala de Apuração e o Seção por seção funcionam
+  no Time DEMO como num time real.
+
+O sorteio é determinístico: a mesma semente e a mesma quantidade devolvem as
+mesmas escolas, e o "Refazer dados" reproduz o time que o ADMIN já conhece.
+
+Sem a tabela carregada (ou com menos de 40 escolas utilizáveis), vale o
+catálogo conferido de `src/lib/domain/demo-catalog.ts`: 33 locais reais em 17
+municípios, divulgados pelo TRE/AL, com a fonte anotada linha a linha.
+
+**O Time DEMO só lê a tabela oficial.** Nenhuma linha dela é gravada, alterada
+ou apagada. O pino de cada escola é gravado no cache de coordenadas no
+**mesmo formato do caminho real** (mesma chave, título e endereço): se um time
+real já tem gente naquela escola, o Time DEMO aponta para a linha que já
+existe, sem reescrevê-la — e essas linhas nunca entram no desfazer de uma
+criação que falhou nem na limpeza do "Refazer dados".
 
 Rua, bairro, zona e seção aparecem **somente onde a fonte os publicou**. Onde
 não publicou, o campo fica vazio — que é a verdade —, e a consulta de
@@ -618,8 +644,18 @@ ADMIN): administrador do time e integrante recebem 403.
 
 O diálogo pede nome, foto, os administradores (quantos forem necessários,
 cada um com nome, telefone e foto opcional) e as quantidades de pessoas e de
-locais de votação, já preenchidas com valores razoáveis. Ao concluir, a
-página do próprio time abre com os cartões, as pessoas e o mapa cheios.
+locais de votação — padrão de **600 pessoas em 60 escolas**, até 5.000 pessoas
+e 400 escolas. A ajuda do campo mostra quantas escolas a fonte tem
+(`GET /api/clients/demo/catalogo`).
+
+Ao concluir, as escolas já estão no mapa (coordenada oficial, sem consulta).
+As **moradias** são ruas reais das próprias escolas do município (no máximo 4
+por município, as do catálogo conferido primeiro, que já estão no cache), e a
+consulta de cada rua inédita tem prazo na criação. O que não coube é
+completado em seguida, no próprio diálogo, com o progresso à vista
+(`POST /api/clients/demo/:id/mapa`, chamado até não sobrar nada); o botão
+"Abrir o time agora" pula essa etapa. Cada rua inédita é uma consulta paga,
+**uma vez no sistema todo**.
 
 Os administradores do Time DEMO entram pelo **mesmo fluxo dos times reais**:
 link de acesso do time + telefone. Não há segundo sistema de autenticação, e
@@ -707,9 +743,16 @@ entrar, e a semente é a mesma (a chave da criação original), então o resulta
 é idêntico. Os pontos `DEMO_SEED` que sobram sem dono — as coordenadas
 inventadas da versão antiga — são removidos do cache.
 
-A correção usa o **catálogo inteiro** e nunca encolhe a equipe: um time criado
-com o padrão antigo (30 pessoas em 6 escolas) sobe para o padrão atual, e um
-time que o ADMIN montou maior continua do tamanho que ele escolheu.
+O diálogo deixa escolher o tamanho da nova geração: **pessoas** (em branco
+mantém o tamanho atual — a correção nunca encolhe a equipe sem pedido) e
+**escolas** (padrão 60, da tabela oficial; sem ela, o catálogo inteiro). É
+assim que um Time DEMO antigo, de 33 escolas, passa para as escolas oficiais
+do TSE. Depois de refazer, o mapa das moradias é completado do mesmo jeito da
+criação.
+
+A segunda camada (pessoas trazidas pela equipe) vota nas **mesmas escolas**
+do time, lidas das próprias pessoas dele por zona + seção — nunca em um
+sorteio novo.
 
 ### Fora dos números reais
 

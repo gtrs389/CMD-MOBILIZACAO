@@ -1,7 +1,8 @@
 import type { NextRequest } from 'next/server';
 import { requirePermission } from '@/lib/server/guard';
-import { forbidden, jsonOk, toErrorResponse } from '@/lib/server/http';
+import { badRequest, forbidden, jsonOk, toErrorResponse } from '@/lib/server/http';
 import { refreshDemoTeam } from '@/lib/server/demo.service';
+import { demoRefreshSchema } from '@/lib/validation/server.schema';
 
 /**
  * Corrige os dados gerados de um Time DEMO que ja existe. EXCLUSIVO do ADMIN
@@ -20,9 +21,12 @@ import { refreshDemoTeam } from '@/lib/server/demo.service';
  * entrar, e a semente e a mesma.
  *
  * Time real nao passa daqui: `refreshDemoTeam` recusa o que nao e `is_demo`.
+ *
+ * O corpo e opcional: `{ people, places }` escolhe o tamanho da nova geracao.
+ * Sem corpo, vale o comportamento de sempre.
  */
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   ctx: RouteContext<'/api/clients/demo/[id]/dados'>,
 ) {
   try {
@@ -30,7 +34,22 @@ export async function POST(
     if (user.role !== 'ADMIN') throw forbidden();
 
     const { id } = await ctx.params;
-    return jsonOk({ report: await refreshDemoTeam(id) });
+
+    const texto = await request.text().catch(() => '');
+    let corpo: unknown = {};
+    if (texto.trim()) {
+      try {
+        corpo = JSON.parse(texto);
+      } catch {
+        throw badRequest('Corpo da requisição inválido.');
+      }
+    }
+    const entrada = demoRefreshSchema.safeParse(corpo);
+    if (!entrada.success) {
+      throw badRequest(entrada.error.issues[0]?.message ?? 'Dados inválidos.');
+    }
+
+    return jsonOk({ report: await refreshDemoTeam(id, entrada.data) });
   } catch (error) {
     return toErrorResponse(error);
   }

@@ -1,9 +1,10 @@
 import { isValidCpf } from '@/lib/utils/documents';
 import { normalizePhone } from '@/lib/utils/phone';
 import {
+  DEMO_ADDRESSES,
   DEMO_POLLING_PLACES,
   DEMO_STATE,
-  addressesInCity,
+  type DemoAddress,
   type DemoPollingPlace,
 } from './demo-catalog';
 
@@ -47,9 +48,13 @@ export const DEMO_PROVIDER = 'DEMO_SEED';
  *
  * Um time pequeno demais nao demonstra nada: com trinta pessoas em seis
  * escolas o mapa fica ralo, o ranking de locais empata em tudo e o grafico
- * vira uma linha reta. Os valores abaixo enchem as telas sem virar carga.
+ * vira uma linha reta. Com a tabela oficial do TSE carregada, as escolas
+ * deixaram de ser o gargalo — sao centenas, de graca e com coordenada
+ * oficial —, entao o padrao e um time com cara de operacao estadual: seiscentas
+ * pessoas em sessenta escolas, espalhadas por varios municipios. Sem a tabela,
+ * o catalogo conferido limita os locais sozinho.
  */
-export const DEMO_DEFAULTS = { people: 120, places: 12 } as const;
+export const DEMO_DEFAULTS = { people: 600, places: 60 } as const;
 
 /**
  * Limites conferidos no servidor, e nao apenas na tela.
@@ -69,9 +74,11 @@ export const DEMO_LIMITS = {
   // o que torna esse tamanho possivel sem estourar o corpo da requisicao.
   maxPeople: 5000,
   minPlaces: 1,
-  // O teto de verdade e o tamanho do catalogo conferido; este numero so
-  // existe para o servidor nao aceitar um valor absurdo vindo da tela.
-  maxPlaces: 40,
+  // O teto de verdade e quantas escolas existem na fonte: a tabela oficial do
+  // TSE (centenas em Alagoas) ou, sem ela, o catalogo conferido. Este numero
+  // so existe para o servidor nao aceitar um valor absurdo vindo da tela — e
+  // para o mapa continuar legivel.
+  maxPlaces: 400,
 } as const;
 
 /* -------------------------------------------------------------------------
@@ -95,7 +102,7 @@ function seedNumber(seed: string): number {
  * permite ao teste afirmar como os dados ficam distribuidos, em vez de
  * apenas contar linhas.
  */
-function createRandom(seed: string): () => number {
+export function createRandom(seed: string): () => number {
   let state = seedNumber(seed);
   return () => {
     state = (state + 0x6d2b79f5) >>> 0;
@@ -237,6 +244,20 @@ export interface DemoInput {
   admins: number;
   /** Telefones ja usados no time (os dos administradores). */
   usedPhones?: readonly string[];
+  /**
+   * Locais de votacao disponiveis, na ordem de escolha.
+   *
+   * Sem isto, o catalogo conferido (`DEMO_POLLING_PLACES`). Com a tabela
+   * oficial do TSE carregada, o servidor passa aqui as escolas que sorteou
+   * dela (`demo-tse.ts`) — sempre locais reais, nunca inventados.
+   */
+  catalog?: readonly DemoPollingPlace[];
+  /**
+   * Enderecos de moradia disponiveis. Sem isto, os do catalogo conferido.
+   * Sempre filtrados pelo municipio de quem mora: quem vota em Arapiraca nao
+   * mora em Penedo.
+   */
+  addresses?: readonly DemoAddress[];
   /** Agora. Recebido de fora para o teste poder fixar o relogio. */
   now?: Date;
 }
@@ -371,8 +392,11 @@ function shuffle<T>(random: () => number, list: T[]): T[] {
  * nenhuma rua publicada naquele municipio, a moradia fica no bairro do
  * proprio local — ou so no municipio, quando nem bairro houve.
  */
-function residencesFor(place: DemoPollingPlace): DemoResidence[] {
-  const doMunicipio = addressesInCity(place.city);
+function residencesFor(
+  place: DemoPollingPlace,
+  addresses: readonly DemoAddress[],
+): DemoResidence[] {
+  const doMunicipio = addresses.filter((address) => address.city === place.city);
   if (doMunicipio.length > 0) {
     return doMunicipio.map((address) => ({
       street: address.street,
@@ -397,13 +421,15 @@ export function buildDemoData(input: DemoInput): DemoData {
   // estilo: nao existe local de votacao alem dos conferidos, e inventar o
   // proximo seria voltar ao erro que gerou o mapa em Recife. E nunca mais
   // locais do que pessoas, senao sobraria escola sem ninguem.
+  const catalogo = input.catalog && input.catalog.length > 0 ? input.catalog : DEMO_POLLING_PLACES;
+  const enderecos = input.addresses ?? DEMO_ADDRESSES;
   const totalLocais = Math.min(
     clampCount(input.places, DEMO_LIMITS.minPlaces, DEMO_LIMITS.maxPlaces),
-    DEMO_POLLING_PLACES.length,
+    catalogo.length,
     totalPessoas,
   );
 
-  const escolhidos = DEMO_POLLING_PLACES.slice(0, totalLocais);
+  const escolhidos = catalogo.slice(0, totalLocais);
   const places: DemoPlace[] = escolhidos.map((place) => ({
     place,
     zone: place.zone,
@@ -417,7 +443,7 @@ export function buildDemoData(input: DemoInput): DemoData {
   const porChave = new Map<string, number>();
   /** Enderecos disponiveis para cada local, por posicao em `residences`. */
   const moradiasDoLocal: number[][] = escolhidos.map((place) =>
-    residencesFor(place).map((moradia) => {
+    residencesFor(place, enderecos).map((moradia) => {
       const chave = `${moradia.street ?? ''}|${moradia.district ?? ''}|${moradia.city}`;
       const existente = porChave.get(chave);
       if (existente !== undefined) return existente;
@@ -429,8 +455,14 @@ export function buildDemoData(input: DemoInput): DemoData {
   );
 
   // Peso de cada local: e ele que faz o ranking de locais ter topo e base,
-  // como em uma operacao real.
-  const pesos = escolhidos.map(() => 1 + Math.floor(random() * 6));
+  // como em uma operacao real. Escola da tabela oficial pesa tambem pelo
+  // tamanho: um colegio de trinta secoes recebe mais gente do que uma escola
+  // rural de duas, como na vida real.
+  const pesos = escolhidos.map((place) => {
+    const sorteado = 1 + Math.floor(random() * 6);
+    if (!place.officialId) return sorteado;
+    return sorteado * Math.max(1, Math.round(Math.sqrt(place.sections.length)));
+  });
   const cotas = shareByWeight(totalPessoas, pesos);
 
   // As pessoas de um mesmo local nao podem nascer em sequencia: as datas de

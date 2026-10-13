@@ -728,6 +728,26 @@ export const demoTeamCreateSchema = z.object({
 });
 
 /**
+ * "Refazer dados" de um Time DEMO: o tamanho da nova geracao. Os dois sao
+ * opcionais — sem eles, a correcao mantem o tamanho do time e usa o padrao
+ * de escolas, como sempre fez.
+ */
+export const demoRefreshSchema = z.object({
+  people: z
+    .number()
+    .int('Informe um número inteiro de pessoas.')
+    .min(DEMO_LIMITS.minPeople)
+    .max(DEMO_LIMITS.maxPeople, `O máximo é ${DEMO_LIMITS.maxPeople} pessoas.`)
+    .optional(),
+  places: z
+    .number()
+    .int('Informe um número inteiro de locais.')
+    .min(DEMO_LIMITS.minPlaces)
+    .max(DEMO_LIMITS.maxPlaces, `O máximo é ${DEMO_LIMITS.maxPlaces} locais de votação.`)
+    .optional(),
+});
+
+/**
  * Segunda camada do Time DEMO, ajustada depois da criacao.
  *
  * Dois numeros: quantas pessoas recrutam, e quantas elas TRAZEM. O segundo e

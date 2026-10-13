@@ -9,7 +9,6 @@ import {
   type DemoData,
 } from '@/lib/domain/demo';
 import {
-  DEMO_POLLING_PLACES,
   DEMO_SECOND_LAYER_SEED,
   DEMO_SEED_VERSION,
   DEMO_STATE,
@@ -35,7 +34,14 @@ import {
 } from '@/lib/supabase/rest';
 import { deleteImage } from '@/lib/supabase/storage';
 import { createClient, deleteClient, getClient } from './client.service';
-import { pollingPlaceLookup, residenceLookupFor, resolveDemoPoint } from './demo-locations';
+import {
+  pollingPlaceLookup,
+  rememberOfficialPlaces,
+  residenceLookupFor,
+  resolveDemoPoint,
+} from './demo-locations';
+import { demoSchoolsFor, demoSchoolsOfTeam, type DemoSchools } from './demo-schools';
+import type { DemoSchoolSource } from '@/lib/domain/demo-tse';
 import { badRequest, notFound } from './http';
 
 /**
@@ -50,12 +56,14 @@ import { badRequest, notFound } from './http';
  * toda metrica global (ver `demo-scope.ts`), e o fato de que os dados dele
  * sao gerados aqui, no servidor.
  *
- * OS LUGARES SAO REAIS, E DE ALAGOAS. Escola, rua, bairro, municipio, UF,
- * zona e secao vem do catalogo (`demo-catalog.ts`), que so tem local de
- * votacao divulgado pelo TRE/AL, com a fonte anotada. As coordenadas vem da
- * consulta de endereco do proprio sistema (`demo-locations.ts`) e nenhuma e
- * escrita a mao nem deslocada: o que nao passa pelas barreiras de Alagoas
- * simplesmente nao vira ponto.
+ * OS LUGARES SAO REAIS, E DE ALAGOAS. As escolas saem da tabela oficial do
+ * TSE (`cmd_polling_places`), sorteadas pela semente do time entre centenas
+ * de locais de votacao alagoanos (`demo-tse.ts`), com zona, secao e a
+ * coordenada oficial — copiada da tabela, sem consulta paga. Sem a tabela
+ * carregada, vale o catalogo conferido (`demo-catalog.ts`). As moradias sao
+ * ruas reais das proprias escolas, resolvidas pela consulta de endereco do
+ * sistema (`demo-locations.ts`); nenhuma coordenada e escrita a mao nem
+ * deslocada, e o que nao passa pelas barreiras de Alagoas nao vira ponto.
  *
  * AS PESSOAS sao ficticias: nome montado de listas, telefone de uma faixa de
  * demonstracao com DDD 82. Sem CPF, sem titulo de eleitor, sem e-mail e sem
@@ -185,7 +193,8 @@ export async function createDemoTeam(
     );
     clientId = criado.id;
 
-    await seedDemoContent(criado, { people, places, seedKey: input.seedKey }, pontos);
+    const schools = await demoSchoolsFor(places, input.seedKey);
+    await seedDemoContent(criado, { people, places, seedKey: input.seedKey, schools }, pontos);
 
     // Segunda camada, quando pedida. Fica DEPOIS das pessoas porque e sobre
     // elas que ela trabalha: escolhe quem tambem recruta e redistribui os
@@ -262,6 +271,10 @@ export interface DemoRefreshReport {
   clientId: string;
   /** Catalogo aplicado. */
   version: string;
+  /** De onde vieram as escolas: tabela oficial do TSE ou catalogo conferido. */
+  source: DemoSchoolSource;
+  /** Municipios alcancados. */
+  cities: number;
   /** Pessoas ficticias removidas (as da geracao anterior). */
   removed: number;
   /** Pessoas ficticias criadas agora. */
@@ -286,7 +299,16 @@ export interface DemoRefreshReport {
  *
  * Time real nunca entra aqui: sem `is_demo`, a rotina recusa.
  */
-export async function refreshDemoTeam(clientId: string): Promise<DemoRefreshReport> {
+/** Tamanho pedido para a nova geracao. Ausente, vale o padrao. */
+export interface DemoRefreshInput {
+  people?: number;
+  places?: number;
+}
+
+export async function refreshDemoTeam(
+  clientId: string,
+  input: DemoRefreshInput = {},
+): Promise<DemoRefreshReport> {
   const client = await getClient(clientId);
   if (!client) throw notFound('Time não encontrado.');
   if (!client.isDemo) throw badRequest('Só um Time DEMO pode ter os dados regerados.');
@@ -310,13 +332,19 @@ export async function refreshDemoTeam(clientId: string): Promise<DemoRefreshRepo
       limit: DEMO_LIMITS.maxPeople,
     });
   });
-  // A equipe nunca encolhe na correcao: um time criado com o padrao antigo
-  // (trinta pessoas em seis escolas) sobe para o padrao atual, e um time que
-  // o ADMIN montou maior continua do tamanho que ele escolheu.
+  // Sem tamanho pedido, a equipe nunca encolhe na correcao: um time criado
+  // com o padrao antigo sobe para o padrao atual, e um time que o ADMIN
+  // montou maior continua do tamanho que ele escolheu. Com tamanho pedido —
+  // o ADMIN escolheu na tela —, vale o pedido.
   const people = clampCount(
-    Math.max(anteriores.length, DEMO_DEFAULTS.people),
+    input.people ?? Math.max(anteriores.length, DEMO_DEFAULTS.people),
     DEMO_LIMITS.minPeople,
     DEMO_LIMITS.maxPeople,
+  );
+  const places = clampCount(
+    input.places ?? DEMO_DEFAULTS.places,
+    DEMO_LIMITS.minPlaces,
+    DEMO_LIMITS.maxPlaces,
   );
 
   // A semente original: os nomes e a distribuicao continuam os mesmos do time
@@ -342,19 +370,20 @@ export async function refreshDemoTeam(clientId: string): Promise<DemoRefreshRepo
   //    mar. Um ponto ainda usado por outro Time DEMO nao e apagado.
   await dropOrphanSeededPoints();
 
-  // 3. A geracao nova, pelo mesmo caminho da criacao.
+  // 3. A geracao nova, pelo mesmo caminho da criacao. As escolas saem da
+  //    tabela oficial do TSE com a semente original — a mesma quantidade
+  //    devolve as mesmas escolas. Sem a tabela, o catalogo conferido INTEIRO,
+  //    como sempre foi.
   const pontos: string[] = [];
-  // A correcao usa o catalogo INTEIRO: e a unica vez em que aquele time passa
-  // por aqui, e e o que da ao mapa todos os municipios do catalogo. O custo e uma
-  // consulta por endereco inedito, uma unica vez no sistema todo — o cache e
-  // por endereco, entao o proximo Time DEMO nao consulta mais nada.
-  //
+  const seedKey = reserva?.seed_key ?? clientId;
+  const schools = await demoSchoolsFor(places, seedKey);
   const resumo = await seedDemoContent(
     client,
     {
       people,
-      places: DEMO_POLLING_PLACES.length,
-      seedKey: reserva?.seed_key ?? clientId,
+      places: schools.source === 'TSE' ? places : schools.places.length,
+      seedKey,
+      schools,
     },
     pontos,
     admins,
@@ -365,6 +394,8 @@ export async function refreshDemoTeam(clientId: string): Promise<DemoRefreshRepo
   return {
     clientId,
     version: DEMO_SEED_VERSION,
+    source: schools.source,
+    cities: resumo.cities,
     removed: anteriores.length,
     people: resumo.people,
     places: resumo.places,
@@ -440,6 +471,160 @@ export async function setDemoAccess(clientId: string, enabled: boolean): Promise
 }
 
 /* -------------------------------------------------------------------------
+   Completar o mapa
+   ------------------------------------------------------------------------- */
+
+/**
+ * Falhas que valem uma nova tentativa: o prazo da criacao acabou antes de a
+ * rua ser perguntada, ou o provedor piscou. Chave invalida, credito
+ * esgotado ou limite de consultas NAO entram: insistir nelas so gastaria
+ * tempo, e quem resolve e o ADMIN, nas configuracoes.
+ */
+const RETRYABLE_ERRORS = ['TIMEOUT', 'PROVIDER_UNAVAILABLE'] as const;
+
+export interface DemoMapReport {
+  /** Vinculos de moradia que ganharam ponto nesta passagem. */
+  resolved: number;
+  /** Vinculos que ainda podem ganhar ponto em uma proxima passagem. */
+  remaining: number;
+  /**
+   * Vinculos tocados nesta passagem, com ou sem ponto. Zero quer dizer que a
+   * passagem nao andou — e a tela para de chamar.
+   */
+  processed: number;
+}
+
+/**
+ * Completa a camada "Pessoas" de um Time DEMO, um pedaco por chamada.
+ *
+ * A criacao tem prazo para consultar ruas (`LOCATION_BUDGET_MS`): com
+ * dezenas de municipios, o que nao coube fica sem ponto, marcado `TIMEOUT`.
+ * Esta rotina retoma DAI, sem refazer pessoa nenhuma: le os vinculos de
+ * moradia que ficaram para tras, agrupa por endereco — uma consulta serve a
+ * todos os moradores da rua — e resolve o que couber no prazo. A tela chama
+ * de novo enquanto houver o que resolver.
+ *
+ * Cada rua inedita e uma consulta paga, UMA vez no sistema todo: o cache e
+ * por endereco, entao o proximo Time DEMO nao paga de novo.
+ *
+ * So toca o que o gerador criou (`demo_seed`) e so em Time DEMO. Escola nao
+ * passa por aqui: a da tabela oficial ja nasce com ponto.
+ */
+export async function completeDemoMap(clientId: string): Promise<DemoMapReport> {
+  const client = await getClient(clientId);
+  if (!client) throw notFound('Time não encontrado.');
+  if (!client.isDemo) throw badRequest('Só um Time DEMO tem o mapa completado por aqui.');
+
+  const pendentes = await selectRows<Pick<MemberLocationRow, 'id' | 'member_id'>>(
+    TABLES.memberLocations,
+    {
+      select: 'id,member_id',
+      filters: {
+        client_id: `eq.${clientId}`,
+        location_kind: 'eq.RESIDENCE',
+        status: 'eq.FAILED',
+        error_code: `in.(${RETRYABLE_ERRORS.join(',')})`,
+      },
+    },
+  );
+  if (pendentes.length === 0) return { resolved: 0, remaining: 0, processed: 0 };
+
+  const pessoas = await selectRows<Pick<MemberRow, 'id' | 'street' | 'district' | 'city' | 'state'>>(
+    TABLES.members,
+    {
+      select: 'id,street,district,city,state',
+      filters: {
+        id: inFilter([...new Set(pendentes.map((link) => link.member_id))]),
+        demo_seed: 'not.is.null',
+      },
+    },
+  );
+  const pessoaPorId = new Map(pessoas.map((pessoa) => [pessoa.id, pessoa]));
+
+  // Um grupo por endereco: e a mesma consulta, e o mesmo ponto, para todos.
+  const grupos = new Map<
+    string,
+    { lookup: NonNullable<ReturnType<typeof residenceLookupFor>>; city: string; state: string; links: string[] }
+  >();
+  for (const link of pendentes) {
+    const pessoa = pessoaPorId.get(link.member_id);
+    if (!pessoa?.city || pessoa.state !== DEMO_STATE) continue;
+    const lookup = residenceLookupFor({
+      street: pessoa.street,
+      district: pessoa.district,
+      city: pessoa.city,
+      state: DEMO_STATE,
+    });
+    if (!lookup) continue;
+
+    const grupo = grupos.get(lookup.query) ?? {
+      lookup,
+      city: pessoa.city,
+      state: DEMO_STATE,
+      links: [],
+    };
+    grupo.links.push(link.id);
+    grupos.set(lookup.query, grupo);
+  }
+
+  const prazo = Date.now() + LOCATION_BUDGET_MS;
+  const agora = () => new Date().toISOString();
+  let resolved = 0;
+  let remaining = 0;
+  let processed = 0;
+
+  for (const grupo of grupos.values()) {
+    if (Date.now() > prazo) {
+      remaining += grupo.links.length;
+      continue;
+    }
+
+    const outcome = await resolveDemoPoint(grupo.lookup.query, {
+      city: grupo.city,
+      state: grupo.state,
+    });
+
+    let mudanca: Record<string, string | null>;
+    if (outcome.point) {
+      mudanca = {
+        status: 'SUCCESS',
+        query_hash: outcome.hash,
+        location_id: outcome.point.locationId,
+        location_precision: grupo.lookup.precision,
+        error_code: null,
+        resolved_at: agora(),
+      };
+      resolved += grupo.links.length;
+    } else if (outcome.error) {
+      mudanca = {
+        status: 'FAILED',
+        query_hash: outcome.hash,
+        location_id: null,
+        error_code: outcome.error,
+        resolved_at: agora(),
+      };
+      // Falha passageira continua na fila; as outras param aqui.
+      if ((RETRYABLE_ERRORS as readonly string[]).includes(outcome.error)) {
+        remaining += grupo.links.length;
+      }
+    } else {
+      mudanca = {
+        status: 'NOT_FOUND',
+        query_hash: outcome.hash,
+        location_id: null,
+        error_code: null,
+        resolved_at: agora(),
+      };
+    }
+
+    await updateRows(TABLES.memberLocations, { id: inFilter(grupo.links) }, mudanca, 'id');
+    processed += grupo.links.length;
+  }
+
+  return { resolved, remaining, processed };
+}
+
+/* -------------------------------------------------------------------------
    Conteudo de demonstracao
    ------------------------------------------------------------------------- */
 
@@ -456,11 +641,14 @@ interface SeedOptions {
   people: number;
   places: number;
   seedKey: string;
+  /** Escolas e moradias disponiveis (`demo-schools.ts`). */
+  schools: DemoSchools;
 }
 
 interface SeedSummary {
   people: number;
   places: number;
+  cities: number;
   points: { resolved: number; missing: number };
 }
 
@@ -501,6 +689,8 @@ async function seedDemoContent(
     places: options.places,
     admins: admins.length,
     usedPhones: admins.map((row) => row.phone ?? ''),
+    catalog: options.schools.places,
+    addresses: options.schools.addresses,
   });
 
   // AS PESSOAS PRIMEIRO. A ordem nao e detalhe: resolver coordenada conversa
@@ -516,7 +706,7 @@ async function seedDemoContent(
   // correcao ("Refazer dados") tenta de novo depois.
   let locations: SeededLocations = { places: [], residences: [] };
   try {
-    locations = await seedLocations(data, pontos);
+    locations = await seedLocations(data, pontos, options.schools);
   } catch {
     locations = { places: [], residences: [] };
   }
@@ -531,6 +721,7 @@ async function seedDemoContent(
   return {
     people: data.people.length,
     places: data.places.length,
+    cities: data.cities.length,
     points: { resolved: encontrados, missing: total - encontrados },
   };
 }
@@ -561,9 +752,22 @@ interface SeededLocations {
  * Sequencial de proposito: duas consultas simultaneas do mesmo endereco
  * perguntariam duas vezes antes de existir cache — e cada consulta e cobrada.
  */
-async function seedLocations(data: DemoData, pontos: string[]): Promise<SeededLocations> {
+async function seedLocations(
+  data: DemoData,
+  pontos: string[],
+  schools: DemoSchools,
+): Promise<SeededLocations> {
   const places: PointSlot[] = [];
   const residences: PointSlot[] = [];
+
+  // Escolas da tabela oficial: a coordenada e COPIADA, todas de uma vez, sem
+  // provedor e sem prazo — e banco, nao consulta. Nao entram em `pontos`: sao
+  // linhas compartilhadas com os times reais, e o desfazer nao as alcanca.
+  const oficiais = data.places
+    .map((entry) => (entry.place.officialId ? schools.official.get(entry.place.officialId) : undefined))
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
+  const pontosOficiais =
+    oficiais.length > 0 ? await rememberOfficialPlaces(oficiais) : new Map<string, never>();
 
   // Prazo. O que ja esta no cache sai instantaneo; o que precisa do provedor
   // custa uma consulta de rede, e dezenas delas em fila gastam todo o tempo
@@ -575,6 +779,16 @@ async function seedLocations(data: DemoData, pontos: string[]): Promise<SeededLo
   const vencido = () => Date.now() > prazo;
 
   for (const entry of data.places) {
+    if (entry.place.officialId) {
+      const ponto = pontosOficiais.get(entry.place.officialId) ?? null;
+      places.push({
+        point: ponto,
+        hash: ponto?.hash ?? '',
+        error: null,
+        precision: null,
+      });
+      continue;
+    }
     if (vencido()) {
       places.push({ point: null, hash: '', error: 'TIMEOUT', precision: null });
       continue;
@@ -955,14 +1169,18 @@ export async function setDemoRecruiters(
     filters: { client_id: `eq.${clientId}` },
   });
 
+  // As escolas do PROPRIO time: quem a equipe traz vota onde o time ja vota.
+  const schools = await demoSchoolsOfTeam(clientId);
   const data = buildDemoData({
     // Semente propria: a gente da segunda camada nao pode sair com os mesmos
     // nomes e telefones da primeira.
     seed: `${clientId}:camada2:${quantos}:${quantas}`,
     people: quantas,
-    places: DEMO_POLLING_PLACES.length,
+    places: schools.places.length,
     admins: recrutadores.length,
     usedPhones: telefonesEmUso.map((row) => row.phone ?? ''),
+    catalog: schools.places,
+    addresses: schools.addresses,
   });
 
   // 3. Quem trouxe quem, de forma DESIGUAL: um ranking empatado nao mostra
@@ -984,7 +1202,7 @@ export async function setDemoRecruiters(
   let locations: SeededLocations = { places: [], residences: [] };
   const pontos: string[] = [];
   try {
-    locations = await seedLocations(data, pontos);
+    locations = await seedLocations(data, pontos, schools);
   } catch {
     locations = { places: [], residences: [] };
   }

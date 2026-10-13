@@ -9,9 +9,14 @@ import {
 } from '@/lib/domain/map-location';
 import type { DemoResidence } from '@/lib/domain/demo';
 import { isUsableDemoCoordinate, type DemoPollingPlace } from '@/lib/domain/demo-catalog';
-import { TABLES, type MapLocationRow } from '@/lib/supabase/tables';
-import { insertOne, selectOne } from '@/lib/supabase/rest';
-import { queryHash } from './map-location.service';
+import { TABLES, type MapLocationRow, type PollingPlaceRow } from '@/lib/supabase/tables';
+import { inFilter, insertOne, insertRowsInChunks, selectOne, selectRows } from '@/lib/supabase/rest';
+import {
+  pollingPlaceCacheRow,
+  pollingPlaceHash,
+  queryHash,
+  rememberPollingPlace,
+} from './map-location.service';
 import { lookupPlace, MapLookupError } from './serpapi.service';
 
 /**
@@ -185,4 +190,65 @@ export async function resolveDemoPoint(
   if (!saved) return { query, hash, point: null, error: 'UNEXPECTED' };
 
   return { query, hash, point: accepted(saved, true), error: null };
+}
+
+/**
+ * Pinos das escolas da tabela oficial do TSE, todos de uma vez.
+ *
+ * NADA E CONSULTADO: a coordenada e copiada da tabela, pelo MESMO formato que
+ * o caminho real grava quando um integrante de verdade vota naquela escola
+ * (`pollingPlaceCacheRow`, mesma chave, mesmo titulo, mesmo endereco). Por
+ * isso a linha e compartilhada: se um time real ja tem gente naquela escola,
+ * o Time DEMO aponta para a linha que ja existe, e nada e reescrito.
+ *
+ * Em LOTE, e nao escola por escola: trezentas escolas uma a uma seriam
+ * seiscentas idas ao banco, e a criacao gastaria nisso todo o tempo que tem.
+ * Uma leitura do que ja existe, uma escrita do que falta e uma releitura.
+ *
+ * Estas linhas NUNCA entram na lista do desfazer da criacao: sao dado
+ * publico, iguais para todos os times, e uma escola que um time real use nao
+ * pode sumir porque uma demonstracao falhou.
+ *
+ * Devolve o ponto de cada escola pelo id da linha oficial. Escola fora de
+ * Alagoas ou sem coordenada nao entra — nao vira pino.
+ */
+export async function rememberOfficialPlaces(
+  rows: readonly PollingPlaceRow[],
+): Promise<Map<string, DemoPoint>> {
+  const comPonto = rows.filter((row) => isUsableDemoCoordinate(row.latitude, row.longitude));
+  const resultado = new Map<string, DemoPoint>();
+  if (comPonto.length === 0) return resultado;
+
+  const porHash = new Map(comPonto.map((row) => [pollingPlaceHash(row.id), row] as const));
+  const hashes = [...porHash.keys()];
+
+  const ler = () =>
+    selectRows<MapLocationRow>(TABLES.mapLocations, {
+      select: '*',
+      filters: { query_hash: inFilter(hashes) },
+    });
+
+  let existentes = await ler();
+  const ja = new Set(existentes.map((row) => row.query_hash));
+  const faltam = comPonto.filter((row) => !ja.has(pollingPlaceHash(row.id)));
+
+  if (faltam.length > 0) {
+    try {
+      await insertRowsInChunks(TABLES.mapLocations, faltam.map(pollingPlaceCacheRow), 'id');
+    } catch {
+      // Corrida com outra execucao (a unicidade da chave recusou o lote):
+      // escola por escola, pelo caminho real, que sabe aproveitar a linha
+      // que a outra gravou.
+      for (const row of faltam) await rememberPollingPlace(row).catch(() => null);
+    }
+    existentes = await ler();
+  }
+
+  for (const linha of existentes) {
+    const oficial = porHash.get(linha.query_hash);
+    const ponto = oficial ? accepted(linha, false) : null;
+    if (oficial && ponto) resultado.set(oficial.id, ponto);
+  }
+
+  return resultado;
 }

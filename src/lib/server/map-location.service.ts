@@ -316,21 +316,22 @@ async function pollingPlaceFor(memberId: string): Promise<PollingPlaceRow | null
 }
 
 /**
- * Guarda o local de votacao no cache de coordenadas.
+ * Chave do local de votacao no cache de coordenadas.
  *
- * Nada e consultado: a linha e copiada da nossa tabela. O identificador da
- * consulta e o proprio local, entao todos os integrantes que votam naquela
- * escola apontam para a MESMA linha — que e o que o mapa agrupa em um pino.
+ * E o proprio local, e nao uma consulta: todo integrante que vota naquela
+ * escola — de qualquer time — aponta para a MESMA linha.
  */
-async function rememberPollingPlace(place: PollingPlaceRow): Promise<MapLocationRow | null> {
-  if (place.latitude === null || place.longitude === null) return null;
+export function pollingPlaceHash(placeId: string): string {
+  return queryHash(`local-de-votacao:${placeId}`);
+}
 
-  const hash = queryHash(`local-de-votacao:${place.id}`);
-  const hit = await cached(hash);
-  if (hit) return hit;
-
-  const row = await insertOne<MapLocationRow>(TABLES.mapLocations, {
-    query_hash: hash,
+/**
+ * A linha do cache para um local da tabela do TSE: copiada, nunca consultada.
+ * Quem chama ja conferiu que o local tem coordenada.
+ */
+export function pollingPlaceCacheRow(place: PollingPlaceRow): Record<string, string | number | null> {
+  return {
+    query_hash: pollingPlaceHash(place.id),
     latitude: place.latitude,
     longitude: place.longitude,
     title: place.name,
@@ -340,7 +341,26 @@ async function rememberPollingPlace(place: PollingPlaceRow): Promise<MapLocation
     image_url: null,
     provider: 'CMD_LOCAIS_DE_VOTACAO',
     searched_at: new Date().toISOString(),
-  }).catch(() => null);
+  };
+}
+
+/**
+ * Guarda o local de votacao no cache de coordenadas.
+ *
+ * Nada e consultado: a linha e copiada da nossa tabela. O identificador da
+ * consulta e o proprio local, entao todos os integrantes que votam naquela
+ * escola apontam para a MESMA linha — que e o que o mapa agrupa em um pino.
+ */
+export async function rememberPollingPlace(place: PollingPlaceRow): Promise<MapLocationRow | null> {
+  if (place.latitude === null || place.longitude === null) return null;
+
+  const hash = pollingPlaceHash(place.id);
+  const hit = await cached(hash);
+  if (hit) return hit;
+
+  const row = await insertOne<MapLocationRow>(TABLES.mapLocations, pollingPlaceCacheRow(place)).catch(
+    () => null,
+  );
 
   // Corrida entre duas execucoes: a unicidade decide e a outra linha serve.
   return row ?? (await cached(hash));

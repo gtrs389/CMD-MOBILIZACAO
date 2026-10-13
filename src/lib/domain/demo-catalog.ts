@@ -103,6 +103,13 @@ export interface DemoPollingPlace {
   sections: readonly string[];
   /** Onde isto foi conferido. */
   source: string;
+  /**
+   * Linha da tabela oficial do TSE (`cmd_polling_places`) de onde o local
+   * saiu. Ausente nas entradas do catalogo conferido abaixo. Com ela, a
+   * coordenada e a OFICIAL, copiada da tabela — sem consulta paga, pelo mesmo
+   * caminho que poe a escola de um integrante real no mapa.
+   */
+  officialId?: string;
 }
 
 /**

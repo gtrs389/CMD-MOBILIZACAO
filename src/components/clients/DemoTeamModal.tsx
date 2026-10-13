@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { FlaskConical, Plus, Trash2 } from 'lucide-react';
 import type { ClientSummary, TeamAccessLinks } from '@/lib/types';
 import { DEMO_DEFAULTS, DEMO_LIMITS } from '@/lib/domain/demo';
@@ -19,6 +19,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { PhotoUpload } from '@/components/common/PhotoUpload';
 import { BannerUpload } from '@/components/common/BannerUpload';
+import { completarMapaDemo, useDemoCatalogo, type ProgressoDoMapa } from './demo-mapa';
 
 /**
  * Criacao do Time DEMO. EXCLUSIVO do ADMIN geral.
@@ -74,6 +75,23 @@ export function DemoTeamModal({ onClose, onCreated }: DemoTeamModalProps) {
    */
   const [seedKey] = useState(() => createId('demo'));
   const [saving, setSaving] = useState(false);
+  const catalogo = useDemoCatalogo();
+  /**
+   * Depois de criado, o time completa a camada "Pessoas" do mapa aqui mesmo,
+   * com o progresso a vista. Nulo enquanto o time nao existe.
+   */
+  const [mapa, setMapa] = useState<ProgressoDoMapa | null>(null);
+  const criadoRef = useRef<{ client: ClientSummary; accessLinks: TeamAccessLinks | null } | null>(
+    null,
+  );
+  const entregueRef = useRef(false);
+
+  /** Abre o time criado. Uma vez so, venha do fim do mapa ou do botao. */
+  function abrirTime() {
+    if (entregueRef.current || !criadoRef.current) return;
+    entregueRef.current = true;
+    onCreated(criadoRef.current);
+  }
 
   function alterar(key: string, patch: Partial<DemoAdmin>) {
     setAdmins((atual) =>
@@ -128,7 +146,14 @@ export function DemoTeamModal({ onClose, onCreated }: DemoTeamModalProps) {
       );
 
       toast.success('Time DEMO criado com sucesso.');
-      onCreated({ client: result.client, accessLinks: result.accessLinks ?? null });
+      criadoRef.current = { client: result.client, accessLinks: result.accessLinks ?? null };
+
+      // As escolas ja nascem no mapa (coordenada oficial do TSE). As ruas de
+      // moradia que nao couberam no prazo da criacao sao completadas agora,
+      // com o progresso a vista — e o botao "Abrir o time agora" pula isso.
+      setMapa({ resolvidos: 0, faltam: 0 });
+      await completarMapaDemo(result.client.id, setMapa, () => entregueRef.current);
+      abrirTime();
     } catch (falha) {
       toast.error(
         falha instanceof Error && falha.message
@@ -149,19 +174,41 @@ export function DemoTeamModal({ onClose, onCreated }: DemoTeamModalProps) {
       title="Criar Time DEMO"
       description="Um time completo para apresentação: pessoas, endereços, locais de votação e mapa. Os dados são fictícios e ficam fora dos números reais."
       footer={
-        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
-            Cancelar
-          </Button>
-          <Button onClick={() => void criar()} loading={saving}>
-            {!saving ? <FlaskConical aria-hidden="true" className="size-4" /> : null}
-            {saving ? 'Criando Time DEMO...' : 'Criar Time DEMO'}
-          </Button>
-        </div>
+        mapa ? (
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button onClick={abrirTime}>Abrir o time agora</Button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" onClick={onClose} disabled={saving}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void criar()} loading={saving}>
+              {!saving ? <FlaskConical aria-hidden="true" className="size-4" /> : null}
+              {saving ? 'Criando Time DEMO...' : 'Criar Time DEMO'}
+            </Button>
+          </div>
+        )
       }
     >
       <div className="space-y-5">
-        {saving ? (
+        {mapa ? (
+          <div
+            role="status"
+            className="space-y-1 rounded-control border border-line bg-brand-50 p-3 text-sm text-brand-800"
+          >
+            <p className="flex items-center gap-2 font-medium">
+              <Spinner className="size-4" />
+              Time criado. Completando o mapa das pessoas...
+            </p>
+            <p className="text-xs text-brand-700">
+              {mapa.resolvidos > 0 || mapa.faltam > 0
+                ? `${mapa.resolvidos} pessoa(s) já no mapa${mapa.faltam > 0 ? `, ${mapa.faltam} a caminho` : ''}.`
+                : 'As escolas já estão no mapa; agora as ruas onde as pessoas moram.'}{' '}
+              Pode abrir o time agora: o que faltar continua em &quot;Refazer dados&quot;.
+            </p>
+          </div>
+        ) : saving ? (
           <p className="flex items-center gap-2 rounded-control border border-line bg-brand-50 p-3 text-sm text-brand-800">
             <Spinner className="size-4" />
             Criando Time DEMO... gerando pessoas, endereços e locais de votação.
@@ -323,9 +370,17 @@ export function DemoTeamModal({ onClose, onCreated }: DemoTeamModalProps) {
           <Field
             id="demo-locais"
             label="Locais de votação"
-            // O teto nao e uma escolha de tela: sao os locais de votacao de
-            // Alagoas que estao conferidos. Pedir mais nao inventa o proximo.
-            help={`De ${DEMO_LIMITS.minPlaces} a ${DEMO_POLLING_PLACES.length}, em ${DEMO_CITIES.length} municípios de Alagoas.`}
+            // O teto nao e uma escolha de tela: sao as escolas que existem na
+            // fonte — a tabela oficial do TSE ou, sem ela, o catalogo
+            // conferido. Pedir mais nao inventa a proxima.
+            help={
+              catalogo?.source === 'TSE'
+                ? `De ${DEMO_LIMITS.minPlaces} a ${Math.min(DEMO_LIMITS.maxPlaces, catalogo.schools)}. ` +
+                  `Escolas reais da tabela oficial do TSE: ${catalogo.schools.toLocaleString('pt-BR')} ` +
+                  `em ${catalogo.cities} municípios de Alagoas, com zona e seção.`
+                : `De ${DEMO_LIMITS.minPlaces} a ${catalogo?.schools ?? DEMO_POLLING_PLACES.length}, ` +
+                  `em ${catalogo?.cities ?? DEMO_CITIES.length} municípios de Alagoas.`
+            }
           >
             <Input
               id="demo-locais"
