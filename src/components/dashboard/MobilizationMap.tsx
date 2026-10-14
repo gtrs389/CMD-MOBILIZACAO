@@ -52,6 +52,7 @@ import {
   baixarPdfDoConfronto,
   baixarPdfDaVotacao,
   baixarPdfDasPessoasPorEscola,
+  baixarPdfDasSecoesComGente,
   baixarPdfDoRankingDeVotos,
 } from './pdf-do-mapa';
 import { AndamentoAoVivo, BotaoDaVotacao } from './votacao/VotacaoTse';
@@ -61,6 +62,7 @@ import { PlacarDosCandidatos } from './votacao/PlacarDosCandidatos';
 import { CarregandoVotacao } from './votacao/CarregandoVotacao';
 import { EscolaPorEscola } from './votacao/EscolaPorEscola';
 import { MenuDoPdf, type OpcaoDoPdf } from './votacao/MenuDoPdf';
+import { BotaoDePdf } from './BotaoDePdf';
 import { BotaoDasZeradas } from './votacao/BotaoDasZeradas';
 import { corDoCandidato } from './votacao/cores';
 import { textoDoAndamento, useVotacaoAoVivo } from './votacao/use-votacao-ao-vivo';
@@ -793,6 +795,32 @@ export function MobilizationMap({
     else setRaioX(e.chave);
   }
 
+  /**
+   * "Secoes com gente cadastrada": as escolas DA CAMPANHA (cadastro, nao
+   * voto) no recorte do mapa — Lider, referencia, municipio, zona e secao.
+   * Na votacao, o corte por tamanho e a busca falam dos votos, entao nao
+   * valem aqui.
+   */
+  const baixarSecoesComGente = () =>
+    baixarPdfDasSecoesComGente({
+      campanha: applyMapQuery(data, { ...query, kind: 'POLLING_PLACE', ...(candidato ? { minVotes: 0, search: '' } : {}) }).places,
+      referencias: data?.referencias,
+      zona: query.zone,
+      recorte:
+        [
+          query.leader ? `Líder ${options.leaders.find((l) => l.id === query.leader)?.name ?? 'escolhido'}` : null,
+          query.references.length
+            ? `${query.references.length === 1 ? 'Referência' : 'Referências'} ${query.references
+                .map((r) => options.references.find((o) => o.value === r)?.label ?? r)
+                .join(', ')}`
+            : null,
+          recorteEmTexto,
+        ]
+          .filter(Boolean)
+          .join(' · ') || null,
+      time: clientName ?? 'Mapa da mobilização',
+    });
+
   const painelRanking = candidato ? (
     <MapRanking
       places={selection.places}
@@ -823,6 +851,7 @@ export function MobilizationMap({
       onDownloadPeople={() =>
         baixarPdfDasPessoasPorEscola(selection.places, query, clientName ?? 'Mapa da mobilização', clientId)
       }
+      onDownloadSections={baixarSecoesComGente}
       // A altura vem de quem envolve (o flex estica o filho); a largura
       // precisa ser pedida, porque em linha o flex nao estica na horizontal.
       className="w-full"
@@ -1141,6 +1170,12 @@ export function MobilizationMap({
         candidatos={candidatos.length}
         municipios={municipiosDasZeradas}
         onBaixar={baixarZeradas}
+      />
+      <BotaoDePdf
+        variante="cheio"
+        onClick={baixarSecoesComGente}
+        rotulo="Seções com gente (PDF)"
+        titulo="Onde o time tem gente cadastrada, escola por escola e seção por seção, com quantas pessoas cada Líder cadastrou. Segue o filtro de Líder, referência e município do mapa."
       />
     </>
   );

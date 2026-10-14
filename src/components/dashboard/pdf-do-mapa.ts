@@ -13,6 +13,7 @@ import {
 } from '@/lib/domain/confronto';
 import { fotoDoCandidatoUrl, type CandidatoDaVotacao } from '@/lib/domain/votacao-tse';
 import { relatorioDeZeradas, type SecoesDoMunicipioPayload } from '@/lib/domain/secoes-zeradas';
+import { relatorioDeGente } from '@/lib/domain/secoes-com-gente';
 import { api } from '@/lib/repositories/http/api';
 import { baixarArquivo } from '@/lib/utils/download';
 
@@ -363,4 +364,35 @@ export async function baixarPdfDasZeradas({
   });
   const nomes = achados.map(({ candidato: c }) => `${slug(c.nome)}-${c.numero}`).join('_x_');
   baixarArquivo(`secoes-zeradas_${slug(municipios.join('-'))}_${nomes}_${slug(time)}_${dataDoArquivo()}.pdf`, blob);
+}
+
+/**
+ * As secoes onde o time tem gente cadastrada (nao voto), escola por escola,
+ * com quantas pessoas cada Lider cadastrou em cada secao. `campanha`: as
+ * escolas da campanha ja no recorte do mapa (Lider, referencia, municipio).
+ */
+export async function baixarPdfDasSecoesComGente({
+  campanha,
+  referencias,
+  zona,
+  recorte,
+  time,
+}: {
+  campanha: readonly PollingPlacePin[];
+  /** As referencias dos Lideres (a tag ao lado do nome). */
+  referencias?: Readonly<Record<string, string>>;
+  /** O filtro de zona do mapa: so as secoes dela. */
+  zona: string | null;
+  /** O recorte em palavras (Lider, referencia, municipio...), ou nulo sem filtro. */
+  recorte: string | null;
+  time: string;
+}): Promise<void> {
+  const { gerarPdfDasSecoesComGente } = await import('@/components/neo/SecoesComGentePdf');
+  const blob = await gerarPdfDasSecoesComGente({
+    relatorio: relatorioDeGente(campanha, referencias, zona),
+    time,
+    recorte,
+    geradoEm: new Date().toISOString(),
+  });
+  baixarArquivo(`secoes-com-gente_${slug(recorte ?? time)}_${dataDoArquivo()}.pdf`, blob);
 }

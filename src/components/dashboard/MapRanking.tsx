@@ -36,6 +36,8 @@ interface MapRankingProps {
   onDownload?: () => Promise<void>;
   /** Baixa, em PDF, quem vota em cada local: zona, secao e Lider de cada pessoa. */
   onDownloadPeople?: () => Promise<void>;
+  /** Baixa, em PDF, as secoes onde o time tem gente cadastrada, com os Lideres de cada uma. */
+  onDownloadSections?: () => Promise<void>;
   /** Titulo da lista. Na votacao do TSE: "Onde Fulano teve mais votos". */
   titulo?: string;
   /** Rodape: de onde o numero vem. */
@@ -52,6 +54,7 @@ export function MapRanking({
   onFocus,
   onDownload,
   onDownloadPeople,
+  onDownloadSections,
   titulo = 'Onde você tem mais votos',
   nota = ESTIMATED_VOTES_HINT,
   destaques,
@@ -68,7 +71,7 @@ export function MapRanking({
             <Trophy aria-hidden="true" className="size-4 shrink-0 text-brand-700" />
             <span className="min-w-0">{titulo}</span>
           </h3>
-          {ranking.length > 0 && (onDownload || onDownloadPeople) ? (
+          {ranking.length > 0 && (onDownload || onDownloadPeople || onDownloadSections) ? (
             <div className="flex items-center gap-1.5">
               {onDownload ? (
                 <BotaoDePdf onClick={onDownload} rotulo="PDF" titulo="Baixar o ranking de locais, zonas e seções em PDF" />
@@ -78,6 +81,13 @@ export function MapRanking({
                   onClick={onDownloadPeople}
                   rotulo="Pessoas"
                   titulo="Baixar em PDF quem vota em cada local, com zona, seção e Líder de cada pessoa"
+                />
+              ) : null}
+              {onDownloadSections ? (
+                <BotaoDePdf
+                  onClick={onDownloadSections}
+                  rotulo="Seções"
+                  titulo="Baixar em PDF as seções com gente cadastrada, com quantas pessoas cada Líder cadastrou (filtre por Líder ou referência)"
                 />
               ) : null}
             </div>

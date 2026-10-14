@@ -30,7 +30,7 @@ export interface PdfDasZeradasProps {
 }
 
 /** As cores da tela (globals.css). */
-const T = {
+export const T = {
   navy900: '#0f1e35',
   navy800: '#16263f',
   navy300: '#8ea6c4',
@@ -50,7 +50,7 @@ const T = {
   danger700: '#8e1c13',
 };
 
-const plural = (n: number, um: string, varios: string) => `${num(n)} ${n === 1 ? um : varios}`;
+export const plural = (n: number, um: string, varios: string) => `${num(n)} ${n === 1 ? um : varios}`;
 const iniciais = (nome: string) => {
   const partes = nome.trim().split(/\s+/).filter((p) => p.length > 2);
   return ((partes[0]?.[0] ?? '') + (partes.length > 1 ? partes[partes.length - 1][0] : '')).toUpperCase() || '?';
@@ -60,7 +60,7 @@ const iniciais = (nome: string) => {
    Icones (os mesmos tracos do lucide da tela)
    ------------------------------------------------------------------------- */
 
-function Icone({ d, tamanho, cor, grosso = 2 }: { d: string[]; tamanho: number; cor: string; grosso?: number }) {
+export function Icone({ d, tamanho, cor, grosso = 2 }: { d: string[]; tamanho: number; cor: string; grosso?: number }) {
   return (
     <Svg viewBox="0 0 24 24" width={tamanho} height={tamanho}>
       {d.map((p) => (
@@ -69,7 +69,7 @@ function Icone({ d, tamanho, cor, grosso = 2 }: { d: string[]; tamanho: number; 
     </Svg>
   );
 }
-const PESSOAS = ['M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2', 'M9 3a4 4 0 1 0 0 8a4 4 0 1 0 0-8z', 'M22 21v-2a4 4 0 0 0-3-3.87', 'M16 3.13a4 4 0 0 1 0 7.75'];
+export const PESSOAS = ['M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2', 'M9 3a4 4 0 1 0 0 8a4 4 0 1 0 0-8z', 'M22 21v-2a4 4 0 0 0-3-3.87', 'M16 3.13a4 4 0 0 1 0 7.75'];
 const MARCADOR = ['m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2Z', 'm9 10 2 2 4-4'];
 const SEM_MARCADOR = ['m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2Z', 'm14.5 7.5-5 5', 'm9.5 7.5 5 5'];
 const COROA = [
@@ -86,7 +86,7 @@ const NUMERO = 34;
 /** Recuo do rotulo: o tamanho da marca (foto ou icone) e o espaco ate a barra. */
 const RECUO = 24;
 
-function Barra({ valor, escala, cor }: { valor: number; escala: number; cor: string }) {
+export function Barra({ valor, escala, cor }: { valor: number; escala: number; cor: string }) {
   const largura = valor > 0 ? Math.max(2, (valor / Math.max(1, escala)) * 100) : 0;
   return (
     <View style={{ flex: 1, height: 7, backgroundColor: T.ink100, borderRadius: 3.5 }}>
@@ -121,7 +121,7 @@ function SeloDaReferencia({ referencia }: { referencia: string | null | undefine
   );
 }
 
-function ChipDoLider({ l }: { l: LiderNaZerada }) {
+export function ChipDoLider({ l }: { l: LiderNaZerada }) {
   return (
     <View
       style={{
@@ -341,7 +341,7 @@ function CartaoDaEscola({ e, posicao, candidatos }: { e: EscolaComZeradas; posic
    O documento
    ------------------------------------------------------------------------- */
 
-function Numero({ valor, rotulo, nota, cor }: { valor: number; rotulo: string; nota: string; cor: string }) {
+export function Numero({ valor, rotulo, nota, cor }: { valor: number; rotulo: string; nota: string; cor: string }) {
   return (
     <View style={{ flex: 1, backgroundColor: '#ffffff', borderWidth: 0.8, borderColor: T.line, borderRadius: 7, paddingVertical: 8, paddingHorizontal: 10 }}>
       <Text style={{ fontSize: 6, fontFamily: 'Helvetica-Bold', color: T.ink500, letterSpacing: 0.8 }}>{s(rotulo.toUpperCase())}</Text>
