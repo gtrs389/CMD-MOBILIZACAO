@@ -916,17 +916,28 @@ async function montarMapa(clientId?: string): Promise<MapOverviewPayload> {
   ]);
 
   const clientIds = [...new Set(members.map((member) => member.client_id))];
+  // Foto e e-mail so aparecem no pino de MORADIA, e o retorno eleitoral so
+  // completa o pino de ESCOLA: cada um e buscado so para quem vai usar. O
+  // retorno eleitoral, alem de pesado, e decifrado linha a linha.
+  const residentes = new Set(
+    resolved.filter((link) => link.location_kind === 'RESIDENCE').map((link) => link.member_id),
+  );
+  const eleitores = [
+    ...new Set(resolved.filter((link) => link.location_kind !== 'RESIDENCE').map((link) => link.member_id)),
+  ];
   const [clients, photos, verifications, emails] = await Promise.all([
     selectRows<{ id: string; name: string }>(TABLES.clients, {
       select: 'id,name',
       filters: { id: inFilter(clientIds) },
     }),
-    signedUrls(members.map((member) => member.photo_path)),
-    selectRows<MemberVerificationRow>(TABLES.memberVerifications, {
-      select: 'member_id,tse_payload',
-      filters: { member_id: inFilter(memberIds) },
-    }),
-    memberEmails(memberIds, clientIds),
+    signedUrls(members.map((member) => (residentes.has(member.id) ? member.photo_path : null))),
+    eleitores.length
+      ? selectRows<MemberVerificationRow>(TABLES.memberVerifications, {
+          select: 'member_id,tse_payload',
+          filters: { member_id: inFilter(eleitores) },
+        })
+      : Promise.resolve([] as MemberVerificationRow[]),
+    memberEmails([...residentes], clientIds),
   ]);
 
   const placeById = new Map(places.map((place) => [place.id, place]));

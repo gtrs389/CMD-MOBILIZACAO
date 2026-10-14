@@ -1,4 +1,4 @@
-import type { NextRequest } from 'next/server';
+import { after, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { requirePermission } from '@/lib/server/guard';
 import { forbidden, jsonOk, readJson, toErrorResponse } from '@/lib/server/http';
@@ -31,10 +31,14 @@ export async function GET(request: NextRequest) {
       return jsonOk(await mapOverview(user.candidateId));
     }
 
-    // Vinculos que faltam e pendentes ja resolvidos aqui, um de cada vez:
-    // assim o mapa abre com o que existe, sem consultas em paralelo.
-    await ensureResidenceLinks().catch(() => undefined);
-    await resolvePending(5).catch(() => undefined);
+    // Vinculos que faltam e pendentes, um de cada vez, DEPOIS da resposta: o
+    // mapa abre com o que ja existe e nao espera ate cinco consultas ao
+    // provedor (cada uma leva segundos). O que for localizado agora aparece
+    // na proxima abertura.
+    after(async () => {
+      await ensureResidenceLinks().catch(() => undefined);
+      await resolvePending(5).catch(() => undefined);
+    });
 
     const pedido = request.nextUrl.searchParams.get('clientId') ?? undefined;
     return jsonOk(await mapOverview(pedido));

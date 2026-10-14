@@ -204,6 +204,9 @@ export function notInFilter(values: readonly string[]): string {
  */
 export const IN_FILTER_CHUNK = 150;
 
+/** Quantos lotes de uma lista longa vao ao banco ao mesmo tempo. */
+const IN_FILTER_CONCURRENCY = 6;
+
 /** A consulta carrega uma lista longa demais para uma URL? */
 function longInFilter(
   filters: Record<string, string> | undefined,
@@ -233,25 +236,35 @@ async function selectInChunks<T>(
   options: QueryOptions,
   longo: { key: string; values: string[] },
 ): Promise<T[]> {
-  const linhas: T[] = [];
-
+  const lotes: string[][] = [];
   for (let inicio = 0; inicio < longo.values.length; inicio += IN_FILTER_CHUNK) {
-    const lote = longo.values.slice(inicio, inicio + IN_FILTER_CHUNK);
-    linhas.push(
-      ...(await request<T[] | null>(
-        buildUrl(table, {
-          ...options,
-          // Os pedacos voltam EXATAMENTE como estavam: `inFilter` ja pos as
-          // aspas quando o filtro foi montado, e aspear de novo geraria
-          // `""uuid""`, que o banco recusa (22P02).
-          filters: { ...options.filters, [longo.key]: `in.(${lote.join(',')})` },
-        }),
-        { method: 'GET' },
-      ).then((rows) => rows ?? [])),
-    );
+    lotes.push(longo.values.slice(inicio, inicio + IN_FILTER_CHUNK));
   }
 
-  return linhas;
+  // Varios lotes ao mesmo tempo, com teto. Um atras do outro, o mapa de um
+  // time de 5.000 pessoas fazia dezenas de idas ao banco em fila e levava
+  // segundos so esperando a rede. A ordem das linhas continua a dos lotes.
+  const resultados: T[][] = new Array(lotes.length);
+  let proximo = 0;
+  const trabalhador = async () => {
+    while (proximo < lotes.length) {
+      const indice = proximo++;
+      resultados[indice] =
+        (await request<T[] | null>(
+          buildUrl(table, {
+            ...options,
+            // Os pedacos voltam EXATAMENTE como estavam: `inFilter` ja pos as
+            // aspas quando o filtro foi montado, e aspear de novo geraria
+            // `""uuid""`, que o banco recusa (22P02).
+            filters: { ...options.filters, [longo.key]: `in.(${lotes[indice].join(',')})` },
+          }),
+          { method: 'GET' },
+        )) ?? [];
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(IN_FILTER_CONCURRENCY, lotes.length) }, trabalhador));
+
+  return resultados.flat();
 }
 
 /**
