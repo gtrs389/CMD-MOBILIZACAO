@@ -11,9 +11,9 @@ import {
   type LiderNaEscola,
   type LiderNoRaioX,
 } from '@/lib/domain/confronto';
-import { fotoDoCandidatoUrl, type CandidatoDaVotacao } from '@/lib/domain/votacao-tse';
+import { fotoDoCandidatoUrl, type CandidatoDaVotacao, type VotacaoNoMapa } from '@/lib/domain/votacao-tse';
 import { relatorioDeZeradas, type SecoesDoMunicipioPayload } from '@/lib/domain/secoes-zeradas';
-import { relatorioDeGente } from '@/lib/domain/secoes-com-gente';
+import { relatorioDeGente, votosPorSecao } from '@/lib/domain/secoes-com-gente';
 import { api } from '@/lib/repositories/http/api';
 import { baixarArquivo } from '@/lib/utils/download';
 
@@ -370,15 +370,20 @@ export async function baixarPdfDasZeradas({
  * As secoes onde o time tem gente cadastrada (nao voto), escola por escola,
  * com quantas pessoas cada Lider cadastrou em cada secao. `campanha`: as
  * escolas da campanha ja no recorte do mapa (Lider, referencia, municipio).
+ * Com candidatos no mapa, cada secao traz os votos de cada um (as votacoes
+ * ja carregadas no mapa, sem nova consulta).
  */
 export async function baixarPdfDasSecoesComGente({
   campanha,
+  candidatos = [],
   referencias,
   zona,
   recorte,
   time,
 }: {
   campanha: readonly PollingPlacePin[];
+  /** Os candidatos do mapa, cada um com a votacao dele e a cor do placar. */
+  candidatos?: { candidato: CandidatoDaVotacao; votacao: VotacaoNoMapa; cor: string }[];
   /** As referencias dos Lideres (a tag ao lado do nome). */
   referencias?: Readonly<Record<string, string>>;
   /** O filtro de zona do mapa: so as secoes dela. */
@@ -387,12 +392,18 @@ export async function baixarPdfDasSecoesComGente({
   recorte: string | null;
   time: string;
 }): Promise<void> {
-  const { gerarPdfDasSecoesComGente } = await import('@/components/neo/SecoesComGentePdf');
+  const [{ gerarPdfDasSecoesComGente }, fotos] = await Promise.all([
+    import('@/components/neo/SecoesComGentePdf'),
+    Promise.all(candidatos.map(({ candidato }) => fotoComoDataUrl(candidato))),
+  ]);
+  const votos = candidatos.map(({ votacao }) => votosPorSecao([...votacao.noMapa, ...votacao.foraDoMapa]));
   const blob = await gerarPdfDasSecoesComGente({
-    relatorio: relatorioDeGente(campanha, referencias, zona),
+    relatorio: relatorioDeGente(campanha, referencias, zona, votos),
+    candidatos: candidatos.map(({ candidato: c, cor }, i) => ({ nome: c.nome, numero: c.numero, cargo: c.cargo, cor, foto: fotos[i] })),
     time,
     recorte,
     geradoEm: new Date().toISOString(),
   });
-  baixarArquivo(`secoes-com-gente_${slug(recorte ?? time)}_${dataDoArquivo()}.pdf`, blob);
+  const nomes = candidatos.map(({ candidato: c }) => `_${slug(c.nome)}-${c.numero}`).join('');
+  baixarArquivo(`secoes-com-gente_${slug(recorte ?? time)}${nomes}_${dataDoArquivo()}.pdf`, blob);
 }

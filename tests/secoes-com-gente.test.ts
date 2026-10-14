@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PollingPlacePin } from '@/lib/domain/map-pin';
 import { placeOfLeader } from '@/lib/domain/map-filters';
-import { relatorioDeGente } from '@/lib/domain/secoes-com-gente';
+import { relatorioDeGente, votosPorSecao } from '@/lib/domain/secoes-com-gente';
 
 const lider = (id: string, name: string, sections: { zone: string | null; section: string | null; total: number }[]) => ({
   id,
@@ -77,7 +77,7 @@ describe('secoes com gente cadastrada', () => {
       ['Beto Lima', 3],
     ]);
 
-    expect(r.totais).toEqual({ escolas: 2, secoes: 3, pessoas: 21, lideres: 2 });
+    expect(r.totais).toEqual({ escolas: 2, secoes: 3, pessoas: 21, lideres: 2, votosPorCandidato: [] });
     expect(r.lideres.map((l) => [l.nome, l.pessoas, l.secoes, l.escolas])).toEqual([
       ['Jailma Souza', 17, 2, 2],
       ['Beto Lima', 3, 1, 1],
@@ -90,7 +90,7 @@ describe('secoes com gente cadastrada', () => {
 
     expect(r.escolas).toHaveLength(1);
     expect(r.escolas[0].secoes.map((s) => [s.zona, s.secao, s.gente])).toEqual([['10', '97', 3]]);
-    expect(r.totais).toEqual({ escolas: 1, secoes: 1, pessoas: 3, lideres: 1 });
+    expect(r.totais).toEqual({ escolas: 1, secoes: 1, pessoas: 3, lideres: 1, votosPorCandidato: [] });
     // Sem as referencias do time, o PDF nao mostra o selo.
     expect(r.escolas[0].secoes[0].lideres[0]).not.toHaveProperty('referencia');
   });
@@ -105,5 +105,29 @@ describe('secoes com gente cadastrada', () => {
       ['Jailma Souza', 4],
       ['Beto Lima', 3],
     ]);
+  });
+
+  it('com candidatos, cada secao com gente traz os votos de cada um (0 onde ele nao teve voto)', () => {
+    // Votacao do TSE: a zona escrita "010" e a secao 97 sao a mesma secao do cadastro.
+    const federal = votosPorSecao([
+      { sections: [{ zone: '010', section: '97', total: 40 }, { zone: '22', section: '5', total: 7 }] },
+      { sections: [{ zone: '10', section: '97', total: 2 }, { zone: '30', section: '1', total: 99 }] },
+    ]);
+    const estadual = votosPorSecao([{ sections: [{ zone: '10', section: '12', total: 15 }] }]);
+    const r = relatorioDeGente(campanha, undefined, null, [federal, estadual]);
+
+    // As secoes continuam sendo as com gente: a 30/1 so tem voto e nao entra.
+    expect(r.escolas.flatMap((e) => e.secoes.map((s) => [s.zona, s.secao, s.votos]))).toEqual([
+      ['22', '5', [7, 0]],
+      ['10', '12', [0, 15]],
+      ['10', '97', [42, 0]],
+    ]);
+    expect(r.escolas.map((e) => [e.titulo, e.votosNasSecoes])).toEqual([
+      ['ESCOLA B', [7, 0]],
+      ['ESCOLA A', [42, 15]],
+    ]);
+    expect(r.totais.votosPorCandidato).toEqual([49, 15]);
+    // A escala da escola cobre a maior barra, de gente ou de voto.
+    expect(r.escolas[1].escala).toBe(42);
   });
 });

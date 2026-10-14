@@ -2,18 +2,33 @@ import { Document, Page, Text, View, pdf } from '@react-pdf/renderer';
 import { appConfig } from '@/config/app.config';
 import type { EscolaComGente, RelatorioDeGente, SecaoComGente } from '@/lib/domain/secoes-com-gente';
 import { Cabecalho, Rodape, num, s, st } from './pdf-base';
-import { semHifen } from './ConfrontoPdf';
-import { Barra, ChipDoLider, Icone, Numero, PESSOAS, T, plural } from './SecoesZeradasPdf';
+import { nomeProprio, semHifen } from './ConfrontoPdf';
+import { FotoNoPdf } from './FotoNoPdf';
+import {
+  Barra,
+  CartaoDoCandidato,
+  ChipDoLider,
+  Icone,
+  LinhaDoCandidato,
+  Numero,
+  PESSOAS,
+  T,
+  plural,
+  type CandidatoDasZeradas,
+} from './SecoesZeradasPdf';
 
 /**
  * PDF das secoes com gente cadastrada: escola por escola, secao por secao,
  * quantas pessoas do time votam ali e quantas cada Lider cadastrou. Nao tem
- * voto: e o mapa do cadastro, no recorte do mapa (Lider, referencia,
- * municipio, zona). Mesmo desenho do PDF das secoes com 0 voto.
+ * voto que escolhe a secao: e o mapa do cadastro, no recorte do mapa (Lider,
+ * referencia, municipio, zona). Com candidato no mapa, cada secao traz
+ * tambem os votos de cada um, no mesmo desenho do PDF das secoes com 0 voto.
  */
 
 export interface PdfDasSecoesComGenteProps {
   relatorio: RelatorioDeGente;
+  /** Os candidatos do mapa, na ordem dos votos do relatorio (vazio sem candidato). */
+  candidatos?: CandidatoDasZeradas[];
   /** Nome do time. */
   time: string;
   /** O recorte do mapa em palavras (Lider, referencia, municipio...), quando ha. */
@@ -24,8 +39,20 @@ export interface PdfDasSecoesComGenteProps {
 /** Coluna do numero na ponta da barra. */
 const NUMERO = 34;
 
-function LinhaDaSecao({ z, escala, ultima }: { z: SecaoComGente; escala: number; ultima: boolean }) {
+function LinhaDaSecao({
+  z,
+  candidatos,
+  escala,
+  ultima,
+}: {
+  z: SecaoComGente;
+  candidatos: CandidatoDasZeradas[];
+  escala: number;
+  ultima: boolean;
+}) {
   const semLider = Math.max(0, z.gente - z.lideres.reduce((t, l) => t + l.pessoas, 0));
+  const total = z.votos.reduce((t, v) => t + v, 0);
+  const maior = Math.max(0, ...z.votos);
   return (
     <View
       wrap={false}
@@ -46,6 +73,12 @@ function LinhaDaSecao({ z, escala, ultima }: { z: SecaoComGente; escala: number;
       </View>
 
       <View style={{ flex: 1 }}>
+        {candidatos.length ? (
+          <Text style={{ fontSize: 7, fontFamily: 'Helvetica-Bold', color: T.navy900, paddingLeft: 24, marginBottom: 2 }}>
+            Gente do time
+            <Text style={{ fontFamily: 'Helvetica', color: T.ink500 }}>{s('  ·  cadastrados que votam aqui')}</Text>
+          </Text>
+        ) : null}
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ width: 17, height: 17, borderRadius: 8.5, backgroundColor: T.navy900, justifyContent: 'center', alignItems: 'center', marginRight: 7 }}>
             <Icone d={PESSOAS} tamanho={8.5} cor={T.gold400} />
@@ -54,9 +87,13 @@ function LinhaDaSecao({ z, escala, ultima }: { z: SecaoComGente; escala: number;
           <Text style={{ width: NUMERO, textAlign: 'right', fontSize: 8.6, fontFamily: 'Helvetica-Bold', color: T.ink900 }}>{num(z.gente)}</Text>
         </View>
 
+        {candidatos.map((c, i) => (
+          <LinhaDoCandidato key={c.numero + c.cargo} c={c} votos={z.votos[i] ?? 0} total={total} maior={maior} varios={candidatos.length > 1} escala={escala} />
+        ))}
+
         {/* Quem cadastrou a gente desta secao. */}
         {z.lideres.length || semLider ? (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 2 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: candidatos.length ? 4 : 2 }}>
             {z.lideres.map((l) => (
               <ChipDoLider key={l.id} l={l} />
             ))}
@@ -73,7 +110,7 @@ function LinhaDaSecao({ z, escala, ultima }: { z: SecaoComGente; escala: number;
   );
 }
 
-function CartaoDaEscola({ e, posicao }: { e: EscolaComGente; posicao: number }) {
+function CartaoDaEscola({ e, posicao, candidatos }: { e: EscolaComGente; posicao: number; candidatos: CandidatoDasZeradas[] }) {
   return (
     <View style={{ borderWidth: 0.8, borderColor: T.line, borderRadius: 7, marginBottom: 12, overflow: 'hidden', backgroundColor: '#ffffff' }}>
       <View wrap={false} minPresenceAhead={80} style={{ backgroundColor: T.navy900, paddingVertical: 9, paddingHorizontal: 11 }}>
@@ -106,10 +143,28 @@ function CartaoDaEscola({ e, posicao }: { e: EscolaComGente; posicao: number }) 
             </Text>
           </View>
         </View>
+
+        {/* Os votos de cada candidato nas secoes listadas da escola. */}
+        {candidatos.length ? (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 7 }}>
+            {candidatos.map((c, i) => (
+              <View
+                key={c.numero + c.cargo}
+                style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: T.navy800, borderRadius: 9, paddingVertical: 2, paddingLeft: 2, paddingRight: 6, marginRight: 4, marginTop: 2 }}
+              >
+                <FotoNoPdf src={c.foto} nome={c.nome} tamanho={13} anel={c.cor} />
+                <Text style={{ fontSize: 6.6, color: T.navy300, marginLeft: 4 }}>{s(`${nomeProprio(c.nome).split(' ')[0]} nessas seções `)}</Text>
+                <Text style={{ fontSize: 7.2, fontFamily: 'Helvetica-Bold', color: (e.votosNasSecoes[i] ?? 0) > 0 ? '#ffffff' : '#ff9b91' }}>
+                  {num(e.votosNasSecoes[i] ?? 0)}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
       </View>
 
       {e.secoes.map((z, i) => (
-        <LinhaDaSecao key={z.chave} z={z} escala={e.escala} ultima={i === e.secoes.length - 1} />
+        <LinhaDaSecao key={z.chave} z={z} candidatos={candidatos} escala={e.escala} ultima={i === e.secoes.length - 1} />
       ))}
     </View>
   );
@@ -140,7 +195,7 @@ function QuadroDosLideres({ relatorio }: { relatorio: RelatorioDeGente }) {
   );
 }
 
-export function PdfDasSecoesComGente({ relatorio, time, recorte, geradoEm }: PdfDasSecoesComGenteProps) {
+export function PdfDasSecoesComGente({ relatorio, candidatos = [], time, recorte, geradoEm }: PdfDasSecoesComGenteProps) {
   const { totais } = relatorio;
   const quando = new Date(geradoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
   const titulo = recorte ?? time;
@@ -148,7 +203,7 @@ export function PdfDasSecoesComGente({ relatorio, time, recorte, geradoEm }: Pdf
     <Document title={`Seções com gente cadastrada · ${titulo}`} author={appConfig.name}>
       <Page size="A4" style={[st.page, { backgroundColor: '#eef2f6' }]}>
         <Cabecalho esquerda={`Seções com gente cadastrada · ${titulo}`} direita={appConfig.name} />
-        <Rodape texto={`Gerado em ${quando} · cadastro do time (não é voto)`} />
+        <Rodape texto={`Gerado em ${quando} · ${candidatos.length ? 'cadastro do time × votação oficial do TSE' : 'cadastro do time (não é voto)'}`} />
 
         <View style={{ backgroundColor: T.navy900, borderRadius: 8, paddingVertical: 13, paddingHorizontal: 14, marginBottom: 9 }}>
           <Text style={{ fontSize: 6.8, letterSpacing: 1.5, color: T.gold400, fontFamily: 'Helvetica-Bold' }}>{s('SEÇÕES COM GENTE CADASTRADA')}</Text>
@@ -158,13 +213,29 @@ export function PdfDasSecoesComGente({ relatorio, time, recorte, geradoEm }: Pdf
           <Text style={{ fontSize: 7.4, color: T.navy300, marginTop: 3, lineHeight: 1.4 }}>
             {s(
               [
-                'Onde o time tem pessoas cadastradas, escola por escola e seção por seção, com quantas cada líder cadastrou',
+                `Onde o time tem pessoas cadastradas, escola por escola e seção por seção, com quantas cada líder cadastrou${
+                  candidatos.length ? (candidatos.length > 1 ? ' e os votos de cada candidato' : ' e os votos do candidato') : ''
+                }`,
                 recorte ? time : null,
               ]
                 .filter(Boolean)
                 .join(' · '),
             )}
           </Text>
+          {candidatos.length ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 9 }}>
+              {candidatos.map((c, i) => (
+                <CartaoDoCandidato
+                  key={c.numero + c.cargo}
+                  c={c}
+                  posicao={i}
+                  valor={totais.votosPorCandidato[i] ?? 0}
+                  rotulo="votos nessas seções"
+                  cor={T.gold400}
+                />
+              ))}
+            </View>
+          ) : null}
         </View>
 
         <View style={{ flexDirection: 'row', marginBottom: 12 }} wrap={false}>
@@ -187,7 +258,7 @@ export function PdfDasSecoesComGente({ relatorio, time, recorte, geradoEm }: Pdf
         <QuadroDosLideres relatorio={relatorio} />
 
         {relatorio.escolas.map((e, i) => (
-          <CartaoDaEscola key={e.chave} e={e} posicao={i + 1} />
+          <CartaoDaEscola key={e.chave} e={e} posicao={i + 1} candidatos={candidatos} />
         ))}
       </Page>
     </Document>

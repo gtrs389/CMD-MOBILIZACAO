@@ -152,6 +152,78 @@ export function ChipDoLider({ l }: { l: LiderNaZerada }) {
   );
 }
 
+/**
+ * Um candidato na secao, como no "Seção por seção" da tela: foto, nome,
+ * numero e cargo em cima, a barra dos votos embaixo, e a etiqueta "0 VOTO"
+ * quando ele zerou.
+ */
+export function LinhaDoCandidato({
+  c,
+  votos,
+  total,
+  maior,
+  varios,
+  escala,
+}: {
+  c: CandidatoDasZeradas;
+  votos: number;
+  /** Votos de todos os candidatos na secao (a parte de cada um). */
+  total: number;
+  /** O maior voto da secao (a coroa). */
+  maior: number;
+  varios: boolean;
+  escala: number;
+}) {
+  const zerou = votos <= 0;
+  const campeao = varios && votos > 0 && votos === maior;
+  return (
+    <View style={{ marginTop: 6 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', paddingLeft: RECUO, paddingRight: NUMERO }}>
+        {campeao ? (
+          <View style={{ width: 9, height: 9, borderRadius: 4.5, backgroundColor: T.gold400, justifyContent: 'center', alignItems: 'center', marginRight: 3 }}>
+            <Icone d={COROA} tamanho={5.5} cor={T.navy900} grosso={2.8} />
+          </View>
+        ) : null}
+        <Text hyphenationCallback={semHifen} style={{ fontSize: 7.4, fontFamily: 'Helvetica-Bold', color: T.ink900 }}>
+          {s(c.nome)}
+        </Text>
+        <Text style={{ fontSize: 7, fontFamily: 'Helvetica-Bold', color: T.ink400, marginLeft: 3 }}>{c.numero}</Text>
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            marginLeft: 4,
+            borderWidth: 0.6,
+            borderColor: `${c.cor}66`,
+            backgroundColor: `${c.cor}14`,
+            borderRadius: 6,
+            paddingHorizontal: 3.5,
+            paddingVertical: 0.8,
+          }}
+        >
+          <View style={{ width: 3.5, height: 3.5, borderRadius: 1.75, backgroundColor: c.cor, marginRight: 2 }} />
+          <Text style={{ fontSize: 6, fontFamily: 'Helvetica-Bold', color: '#334155' }}>{s(c.cargo)}</Text>
+        </View>
+        <View style={{ flex: 1 }} />
+        {zerou ? (
+          <View style={{ backgroundColor: T.danger600, borderRadius: 6, paddingHorizontal: 4.5, paddingVertical: 1.2 }}>
+            <Text style={{ fontSize: 5.8, fontFamily: 'Helvetica-Bold', color: '#ffffff', letterSpacing: 0.4 }}>0 VOTO</Text>
+          </View>
+        ) : varios && total > 0 ? (
+          <Text style={{ fontSize: 6.2, fontFamily: 'Helvetica-Bold', color: T.ink500 }}>{s(`${Math.round((votos / total) * 100)}% da seção`)}</Text>
+        ) : null}
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+        <View style={{ marginRight: RECUO - 17 }}>
+          <FotoNoPdf src={c.foto} nome={c.nome} tamanho={17} anel={c.cor} />
+        </View>
+        <Barra valor={votos} escala={escala} cor={c.cor} />
+        <Text style={{ width: NUMERO, textAlign: 'right', fontSize: 8.6, fontFamily: 'Helvetica-Bold', color: zerou ? T.danger600 : T.ink900 }}>{num(votos)}</Text>
+      </View>
+    </View>
+  );
+}
+
 /** Uma secao: igual a linha do "Seção por seção" da tela. */
 function LinhaDaSecao({
   z,
@@ -214,57 +286,9 @@ function LinhaDaSecao({
         </View>
 
         {/* Cada candidato: rotulo em cima, barra embaixo. */}
-        {candidatos.map((c, i) => {
-          const votos = z.votos[i] ?? 0;
-          const zerou = votos <= 0;
-          const campeao = varios && votos > 0 && votos === maior;
-          return (
-            <View key={c.numero + c.cargo} style={{ marginTop: 6 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', paddingLeft: RECUO, paddingRight: NUMERO }}>
-                {campeao ? (
-                  <View style={{ width: 9, height: 9, borderRadius: 4.5, backgroundColor: T.gold400, justifyContent: 'center', alignItems: 'center', marginRight: 3 }}>
-                    <Icone d={COROA} tamanho={5.5} cor={T.navy900} grosso={2.8} />
-                  </View>
-                ) : null}
-                <Text hyphenationCallback={semHifen} style={{ fontSize: 7.4, fontFamily: 'Helvetica-Bold', color: T.ink900 }}>
-                  {s(c.nome)}
-                </Text>
-                <Text style={{ fontSize: 7, fontFamily: 'Helvetica-Bold', color: T.ink400, marginLeft: 3 }}>{c.numero}</Text>
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    marginLeft: 4,
-                    borderWidth: 0.6,
-                    borderColor: `${c.cor}66`,
-                    backgroundColor: `${c.cor}14`,
-                    borderRadius: 6,
-                    paddingHorizontal: 3.5,
-                    paddingVertical: 0.8,
-                  }}
-                >
-                  <View style={{ width: 3.5, height: 3.5, borderRadius: 1.75, backgroundColor: c.cor, marginRight: 2 }} />
-                  <Text style={{ fontSize: 6, fontFamily: 'Helvetica-Bold', color: '#334155' }}>{s(c.cargo)}</Text>
-                </View>
-                <View style={{ flex: 1 }} />
-                {zerou ? (
-                  <View style={{ backgroundColor: T.danger600, borderRadius: 6, paddingHorizontal: 4.5, paddingVertical: 1.2 }}>
-                    <Text style={{ fontSize: 5.8, fontFamily: 'Helvetica-Bold', color: '#ffffff', letterSpacing: 0.4 }}>0 VOTO</Text>
-                  </View>
-                ) : varios && total > 0 ? (
-                  <Text style={{ fontSize: 6.2, fontFamily: 'Helvetica-Bold', color: T.ink500 }}>{s(`${Math.round((votos / total) * 100)}% da seção`)}</Text>
-                ) : null}
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                <View style={{ marginRight: RECUO - 17 }}>
-                  <FotoNoPdf src={c.foto} nome={c.nome} tamanho={17} anel={c.cor} />
-                </View>
-                <Barra valor={votos} escala={escala} cor={c.cor} />
-                <Text style={{ width: NUMERO, textAlign: 'right', fontSize: 8.6, fontFamily: 'Helvetica-Bold', color: zerou ? T.danger600 : T.ink900 }}>{num(votos)}</Text>
-              </View>
-            </View>
-          );
-        })}
+        {candidatos.map((c, i) => (
+          <LinhaDoCandidato key={c.numero + c.cargo} c={c} votos={z.votos[i] ?? 0} total={total} maior={maior} varios={varios} escala={escala} />
+        ))}
 
         {/* Quem cadastrou a gente desta secao. */}
         {z.lideres.length || semLider ? (
@@ -341,6 +365,51 @@ function CartaoDaEscola({ e, posicao, candidatos }: { e: EscolaComZeradas; posic
    O documento
    ------------------------------------------------------------------------- */
 
+/** O candidato na abertura do PDF, como no placar da tela: foto, nome, numero, cargo e um numero a direita. */
+export function CartaoDoCandidato({
+  c,
+  posicao,
+  valor,
+  rotulo,
+  cor,
+}: {
+  c: CandidatoDasZeradas;
+  /** A posicao na grade de duas colunas. */
+  posicao: number;
+  valor: number;
+  rotulo: string;
+  cor: string;
+}) {
+  return (
+    <View
+      style={{
+        width: '49%',
+        marginRight: posicao % 2 === 0 ? '2%' : 0,
+        marginTop: posicao >= 2 ? 6 : 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: T.navy800,
+        borderRadius: 7,
+        padding: 7,
+        borderLeftWidth: 3,
+        borderLeftColor: c.cor,
+      }}
+    >
+      <FotoNoPdf src={c.foto} nome={c.nome} tamanho={34} anel={c.cor} />
+      <View style={{ flex: 1, marginLeft: 8 }}>
+        <Text hyphenationCallback={semHifen} style={{ fontSize: 8.6, fontFamily: 'Helvetica-Bold', color: '#ffffff', maxLines: 1, textOverflow: 'ellipsis' }}>
+          {s(c.nome)}
+        </Text>
+        <Text style={{ fontSize: 6.8, color: T.navy300, marginTop: 1.5 }}>{s(`${c.numero} · ${c.cargo}`)}</Text>
+      </View>
+      <View style={{ alignItems: 'flex-end', marginLeft: 6 }}>
+        <Text style={{ fontSize: 13, fontFamily: 'Helvetica-Bold', color: cor }}>{num(valor)}</Text>
+        <Text style={{ fontSize: 5.8, color: T.navy300 }}>{s(rotulo)}</Text>
+      </View>
+    </View>
+  );
+}
+
 export function Numero({ valor, rotulo, nota, cor }: { valor: number; rotulo: string; nota: string; cor: string }) {
   return (
     <View style={{ flex: 1, backgroundColor: '#ffffff', borderWidth: 0.8, borderColor: T.line, borderRadius: 7, paddingVertical: 8, paddingHorizontal: 10 }}>
@@ -379,33 +448,7 @@ export function PdfDasZeradas({ relatorio, candidatos, recorte, geradoEm }: PdfD
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 9 }}>
             {candidatos.map((c, i) => (
-              <View
-                key={c.numero + c.cargo}
-                style={{
-                  width: '49%',
-                  marginRight: i % 2 === 0 ? '2%' : 0,
-                  marginTop: i >= 2 ? 6 : 0,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: T.navy800,
-                  borderRadius: 7,
-                  padding: 7,
-                  borderLeftWidth: 3,
-                  borderLeftColor: c.cor,
-                }}
-              >
-                <FotoNoPdf src={c.foto} nome={c.nome} tamanho={34} anel={c.cor} />
-                <View style={{ flex: 1, marginLeft: 8 }}>
-                  <Text hyphenationCallback={semHifen} style={{ fontSize: 8.6, fontFamily: 'Helvetica-Bold', color: '#ffffff', maxLines: 1, textOverflow: 'ellipsis' }}>
-                    {s(c.nome)}
-                  </Text>
-                  <Text style={{ fontSize: 6.8, color: T.navy300, marginTop: 1.5 }}>{s(`${c.numero} · ${c.cargo}`)}</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end', marginLeft: 6 }}>
-                  <Text style={{ fontSize: 13, fontFamily: 'Helvetica-Bold', color: '#ff9b91' }}>{num(totais.zeradasPorCandidato[i] ?? 0)}</Text>
-                  <Text style={{ fontSize: 5.8, color: T.navy300 }}>{s('seções com 0')}</Text>
-                </View>
-              </View>
+              <CartaoDoCandidato key={c.numero + c.cargo} c={c} posicao={i} valor={totais.zeradasPorCandidato[i] ?? 0} rotulo="seções com 0" cor="#ff9b91" />
             ))}
           </View>
         </View>

@@ -799,11 +799,13 @@ export function MobilizationMap({
    * "Secoes com gente cadastrada": as escolas DA CAMPANHA (cadastro, nao
    * voto) no recorte do mapa — Lider, referencia, municipio, zona e secao.
    * Na votacao, o corte por tamanho e a busca falam dos votos, entao nao
-   * valem aqui.
+   * valem aqui; os votos de cada candidato entram ao lado, secao a secao.
    */
   const baixarSecoesComGente = () =>
     baixarPdfDasSecoesComGente({
       campanha: applyMapQuery(data, { ...query, kind: 'POLLING_PLACE', ...(candidato ? { minVotes: 0, search: '' } : {}) }).places,
+      // Todos os escolhidos, como no PDF das secoes com 0 voto, nas cores do placar.
+      candidatos: votacoes ? candidatos.map((c, i) => ({ candidato: c, votacao: votacoes[i], cor: corDo(i) })) : [],
       referencias: data?.referencias,
       zona: query.zone,
       recorte:

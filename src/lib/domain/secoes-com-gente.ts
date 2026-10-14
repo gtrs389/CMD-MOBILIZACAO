@@ -27,6 +27,8 @@ export interface SecaoComGente {
   gente: number;
   /** Quanto cada Lider cadastrou na secao, do maior para o menor. */
   lideres: LiderNaSecao[];
+  /** Votos de cada candidato do mapa na secao, na ordem dele (vazio sem candidato). */
+  votos: number[];
 }
 
 export interface EscolaComGente {
@@ -43,7 +45,9 @@ export interface EscolaComGente {
   semSecao: number;
   /** Quanto cada Lider cadastrou na escola, do maior para o menor. */
   lideres: LiderNaSecao[];
-  /** A maior secao da escola: as barras da escola na mesma escala. */
+  /** Votos de cada candidato nas secoes listadas da escola. */
+  votosNasSecoes: number[];
+  /** A maior barra da escola (gente ou voto): as barras dela na mesma escala. */
   escala: number;
 }
 
@@ -58,7 +62,14 @@ export interface LiderNoRelatorioDeGente {
 
 export interface RelatorioDeGente {
   escolas: EscolaComGente[];
-  totais: { escolas: number; secoes: number; pessoas: number; lideres: number };
+  totais: {
+    escolas: number;
+    secoes: number;
+    pessoas: number;
+    lideres: number;
+    /** Votos de cada candidato nas secoes do relatorio. */
+    votosPorCandidato: number[];
+  };
   lideres: LiderNoRelatorioDeGente[];
 }
 
@@ -67,14 +78,35 @@ const doMaiorParaOMenor = <T extends { pessoas: number; nome: string }>(a: T, b:
   b.pessoas - a.pessoas || a.nome.localeCompare(b.nome, 'pt-BR');
 
 /**
+ * Os votos de um candidato por secao (chave `chaveDaSecao`), das escolas da
+ * votacao dele — com e sem ponto no mapa. Secao fora daqui: 0 voto (a
+ * planilha do TSE nao tem linha de zero).
+ */
+export function votosPorSecao(places: readonly Pick<PollingPlacePin, 'sections'>[]): Map<string, number> {
+  const votos = new Map<string, number>();
+  for (const p of places) {
+    for (const s of p.sections) {
+      if (!s.zone || !s.section) continue;
+      const chave = chaveDaSecao(s.zone, s.section);
+      votos.set(chave, (votos.get(chave) ?? 0) + Math.max(0, s.total));
+    }
+  }
+  return votos;
+}
+
+/**
  * As escolas e secoes onde o time tem gente cadastrada. `zona`: o filtro de
  * zona do mapa — so as secoes dela entram (a escola pode ter outras).
+ * `votos`: com candidato no mapa, os votos de cada um por secao
+ * (`votosPorSecao`) — as secoes continuam sendo as com gente, com o voto
+ * de cada candidato ao lado.
  */
 export function relatorioDeGente(
   campanha: readonly PollingPlacePin[],
   /** As referencias dos Lideres do time (`MapOverviewPayload.referencias`). */
   referencias?: Readonly<Record<string, string>>,
   zona?: string | null,
+  votos: readonly ReadonlyMap<string, number>[] = [],
 ): RelatorioDeGente {
   const comReferencia = (l: { id: string; name: string }) => (referencias ? { referencia: referenciaDoLider(referencias, l) } : {});
   const naZona = (z: string | null | undefined) => !zona || normalizeZone(z) === normalizeZone(zona);
@@ -100,7 +132,14 @@ export function relatorioDeGente(
       }
       if (!naZona(s.zone)) continue;
       const chave = chaveDaSecao(s.zone, s.section);
-      const atual = secoes.get(chave) ?? { chave, zona: s.zone!.trim(), secao: s.section!.trim(), gente: 0, lideres: [] };
+      const atual = secoes.get(chave) ?? {
+        chave,
+        zona: s.zone!.trim(),
+        secao: s.section!.trim(),
+        gente: 0,
+        lideres: [],
+        votos: votos.map((m) => m.get(chave) ?? 0),
+      };
       atual.gente += s.total;
       secoes.set(chave, atual);
     }
@@ -147,7 +186,8 @@ export function relatorioDeGente(
       gente,
       semSecao,
       lideres: [...lideresDaEscola.values()].sort(doMaiorParaOMenor),
-      escala: Math.max(1, ...lista.map((s) => s.gente)),
+      votosNasSecoes: votos.map((_, i) => lista.reduce((t, s) => t + (s.votos[i] ?? 0), 0)),
+      escala: Math.max(1, ...lista.map((s) => Math.max(s.gente, ...s.votos))),
     });
   }
 
@@ -166,6 +206,7 @@ export function relatorioDeGente(
       secoes: escolas.reduce((t, e) => t + e.secoes.length, 0),
       pessoas: escolas.reduce((t, e) => t + e.gente, 0),
       lideres: lideres.length,
+      votosPorCandidato: votos.map((_, i) => escolas.reduce((t, e) => t + (e.votosNasSecoes[i] ?? 0), 0)),
     },
     lideres,
   };
